@@ -9,10 +9,7 @@ Supports rotated input data — pass --rotation-deg to unrotate before
 applying the OSM mask, then transfers flags back to the rotated coords.
 
 Usage:
-    # Unrotated data
     python apply_osm_mask.py input.parquet output.parquet
-
-    # Rotated data (pass the same angle used when rotating)
     python apply_osm_mask.py input.parquet output.parquet --rotation-deg 59
 """
 
@@ -46,7 +43,7 @@ DEFAULT_HALF_WIDTH = 3.0
 
 def unrotate(x, y, angle_deg):
     """Reverse a rotation applied about the centroid of the data."""
-    angle = np.radians(-angle_deg)  # negate to reverse
+    angle = np.radians(-angle_deg)
     cos_a, sin_a = np.cos(angle), np.sin(angle)
     cx, cy = x.mean(), y.mean()
     dx, dy = x - cx, y - cy
@@ -89,13 +86,20 @@ def fetch_streets(bbox_polygon):
     return roads
 
 
-def spatial_join_mask(gdf_points, polygons, label):
+def spatial_join_mask(gdf_points, polygons, label, chunk_size=1_000_000):
     print(f"Running spatial join for {label} ...")
-    joined = gpd.sjoin(gdf_points, polygons, how="left", predicate="within")
-    joined = joined[~joined.index.duplicated(keep="first")]
-    inside = ~joined["index_right"].isna()
-    print(f"  Points {label}: {inside.sum():,}")
-    return inside.values
+    inside = np.zeros(len(gdf_points), dtype=bool)
+
+    for start in range(0, len(gdf_points), chunk_size):
+        end = min(start + chunk_size, len(gdf_points))
+        chunk = gdf_points.iloc[start:end].copy()
+        joined = gpd.sjoin(chunk, polygons, how="left", predicate="within")
+        joined = joined[~joined.index.duplicated(keep="first")]
+        inside[start:end] = ~joined["index_right"].isna()
+        print(f"  {end:,} / {len(gdf_points):,} ...", end="\r")
+
+    print(f"\n  Points {label}: {inside.sum():,}")
+    return inside
 
 
 def main():
@@ -103,8 +107,10 @@ def main():
     parser.add_argument("input",  help="Input parquet file")
     parser.add_argument("output", help="Output parquet file")
     parser.add_argument("--rotation-deg", type=float, default=None,
-                        help="Rotation angle in degrees that was applied to the data. "
+                        help="Rotation angle used when rotating the data. "
                              "If provided, coordinates are unrotated before OSM masking.")
+    parser.add_argument("--chunk-size", type=int, default=1_000_000,
+                        help="Number of points per spatial join chunk (default: 1000000)")
     args = parser.parse_args()
 
     print(f"Reading {args.input} ...")
@@ -144,19 +150,18 @@ def main():
 
     # --- Street mask ---
     if streets is not None:
-        inside_street = spatial_join_mask(gdf_points, streets, "inside streets")
+        inside_street = spatial_join_mask(gdf_points, streets, "inside streets", args.chunk_size)
     else:
         inside_street = np.zeros(len(df), dtype=bool)
 
     # --- Building mask ---
     if buildings is not None:
-        inside_building = spatial_join_mask(gdf_points, buildings, "inside buildings")
-        #df.loc[~inside_building & ~inside_street, "object_height"] = 0.0
-        df.loc[~inside_building, "object_height"] = 0.0
+        inside_building = spatial_join_mask(gdf_points, buildings, "inside buildings", args.chunk_size)
+        df.loc[~inside_building & ~inside_street, "object_height"] = 0.0
     else:
         inside_building = np.zeros(len(df), dtype=bool)
 
-    # --- Add flag columns to original (rotated) dataframe ---
+    # --- Add flag columns ---
     df["is_street"]   = inside_street.astype(np.float32)
     df["is_building"] = inside_building.astype(np.float32)
 

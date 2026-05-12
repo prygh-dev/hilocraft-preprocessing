@@ -19,6 +19,9 @@ Usage:
         --dtm downtown_DTM_4x.tif \\
         --mrr downtown_MRR_aligned.tif \\
         --out samples.parquet
+
+    # With smoothing (recommended to fix potholes and rough terrain)
+    python rasters_to_parquet.py --dsm ... --dtm ... --mrr ... --out ... --smooth-size 5
 """
 
 import argparse
@@ -45,13 +48,11 @@ SCHEMA = pa.schema([
 ])
 
 
-
 def fill_nans_median(grid: np.ndarray) -> np.ndarray:
     nan_mask = np.isnan(grid) | (grid == 0.0)
     if not nan_mask.any():
         return grid
 
-    # Temporarily fill invalid cells with 0 so median_filter doesn't spread NaN
     tmp = np.where(nan_mask, 0.0, grid)
     smoothed = median_filter(tmp, size=3, mode="nearest")
 
@@ -59,6 +60,7 @@ def fill_nans_median(grid: np.ndarray) -> np.ndarray:
     result[nan_mask] = smoothed[nan_mask]
     np.nan_to_num(result, nan=0.0, copy=False)
     return result
+
 
 def read_full(src, nodata):
     """Read entire raster band as float32, replacing nodata with NaN."""
@@ -78,6 +80,9 @@ def main():
     parser.add_argument("--out", default="samples.parquet", help="Output Parquet file")
     parser.add_argument("--chunk-rows", type=int, default=1000,
                         help="Number of raster rows to process at once when writing (default: 1000)")
+    parser.add_argument("--smooth-size", type=int, default=0,
+                        help="Median filter kernel size for smoothing DSM and DTM after NaN filling. "
+                             "0 = no smoothing (default). Try 5 or 7 to fix potholes and rough terrain.")
     args = parser.parse_args()
 
     for p in (args.dsm, args.dtm, args.mrr):
@@ -114,6 +119,15 @@ def main():
     np.nan_to_num(dsm, nan=0.0, copy=False)
     np.nan_to_num(dtm, nan=0.0, copy=False)
     np.nan_to_num(mrr, nan=0.0, copy=False)
+
+    # --- Optional smoothing ---
+    if args.smooth_size > 0:
+        print(f"Smoothing DSM and DTM with median filter (size={args.smooth_size}) ...")
+        print("  Smoothing DSM ...")
+        dsm = median_filter(dsm, size=args.smooth_size, mode="nearest")
+        print("  Smoothing DTM ...")
+        dtm = median_filter(dtm, size=args.smooth_size, mode="nearest")
+        print("  Done smoothing.")
 
     print(f"\nWriting {args.out} ...")
     out_path = Path(args.out)

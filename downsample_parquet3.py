@@ -29,6 +29,8 @@ AGGREGATIONS = {
     "multi_return_ratio": "mean",
     "is_street":          "max",
     "is_building":        "max",
+    "is_building_edge": "max",
+    "wall_depth_below": "max"
 }
 
 
@@ -67,7 +69,7 @@ def main():
     df_out = df_out.rename(columns={"x_cell": "x", "y_cell": "y"})
 
     # Re-binarize is_street and is_building after max aggregation
-    for col in ("is_street", "is_building"):
+    for col in ("is_street", "is_building", "is_building_edge"):
         if col in df_out.columns:
             df_out[col] = (df_out[col] > 0.5).astype(np.float32)
 

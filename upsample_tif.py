@@ -14,11 +14,11 @@ output_tif = sys.argv[3]
 
 with rasterio.open(input_tif) as src:
     data = src.read(
-        out_shape=(src.count, src.height * 1/res, src.width * 1/res),
+        out_shape=(src.count, int(src.height / res), int(src.width / res)),
         resampling=Resampling.bilinear
     )
     transform = src.transform * src.transform.scale(res, res)
     profile = src.profile.copy()
-    profile.update(width=src.width * 1/res, height=src.height * 1/res, transform=transform)
+    profile.update(width=int(src.width / res), height=int(src.height / res), transform=transform)
     with rasterio.open(output_tif, "w", **profile) as dst:
         dst.write(data)
